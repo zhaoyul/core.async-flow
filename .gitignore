@@ -1,0 +1,38 @@
+# Clojure
+target/
+.cpcache/
+.nrepl-port
+.lsp/
+.clj-kondo/
+
+# Clerk output
+docs/
+.clerk/
+
+# IDE files
+.idea/
+*.iml
+.vscode/
+.project
+.classpath
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.swp
+*~
+.#*
+
+# Logs
+*.log
+
+# Build artifacts
+*.jar
+*.class
+
+# Local dev files
+/tmp/
+/scratch/
