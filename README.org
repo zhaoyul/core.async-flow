@@ -1,0 +1,149 @@
+#+TITLE: Core.async Flow Exploration Project
+#+AUTHOR: Clojure Learning Project
+#+DATE: 2024
+
+* Overview
+
+This project provides a comprehensive exploration of Clojure's =core.async= and =flow= features through interactive Clerk notebooks. It serves as a practical learning resource and reference implementation for asynchronous programming patterns in Clojure.
+
+** Key Features Explored
+
+- =core.async= channels, go blocks, and CSP patterns
+- =core.async.flow= for data flow orchestration
+- =core.async.flow-monitor= for monitoring and debugging flows
+- Real-world examples and use cases
+- Interactive visualizations using Clerk
+
+* Project Structure
+
+#+BEGIN_SRC
+core.async-flow/
+├── README.org                    # This file
+├── deps.edn                      # Project dependencies
+├── notebooks/                    # Clerk notebooks
+│   ├── 01_core_async_basics.clj     # Basic core.async concepts
+│   ├── 02_channels_and_go.clj       # Channels and go blocks
+│   ├── 03_async_patterns.clj        # Common async patterns
+│   ├── 04_flow_basics.clj           # Introduction to flow
+│   ├── 05_flow_orchestration.clj    # Complex flow patterns
+│   └── 06_flow_monitoring.clj       # Flow monitoring and debugging
+├── src/                          # Supporting code
+│   └── core_async_flow/
+│       ├── examples.clj             # Reusable examples
+│       ├── utils.clj                # Utility functions
+│       └── visualization.clj        # Visualization helpers
+└── dev/                          # Development utilities
+    └── user.clj                     # Development namespace
+#+END_SRC
+
+* Quick Start
+
+** Prerequisites
+
+- Clojure CLI tools (=clj=)
+- Java 8 or higher
+
+** Installation
+
+1. Clone this repository:
+   #+BEGIN_SRC bash
+   git clone https://github.com/zhaoyul/core.async-flow.git
+   cd core.async-flow
+   #+END_SRC
+
+2. Install dependencies:
+   #+BEGIN_SRC bash
+   clj -P
+   #+END_SRC
+
+3. Start Clerk server:
+   #+BEGIN_SRC bash
+   clj -X:clerk
+   #+END_SRC
+
+4. Open your browser to =http://localhost:7777= to view the notebooks.
+
+** Development
+
+Start a REPL with all dependencies:
+#+BEGIN_SRC bash
+clj -A:dev:clerk
+#+END_SRC
+
+* Learning Path
+
+** 1. Core.async Fundamentals (notebooks/01_core_async_basics.clj)
+- Understanding CSP (Communicating Sequential Processes)
+- Channels as first-class values
+- Basic channel operations: =put!=, =take!=, =close!=
+
+** 2. Channels and Go Blocks (notebooks/02_channels_and_go.clj)
+- Creating and using channels
+- Go blocks and parking semantics
+- Channel transformations with =map=, =filter=, =take=, etc.
+
+** 3. Async Patterns (notebooks/03_async_patterns.clj)
+- Producer-consumer patterns
+- Fan-out and fan-in
+- Multiplexing and demultiplexing
+- Timeouts and alts
+
+** 4. Flow Introduction (notebooks/04_flow_basics.clj)
+- What is =core.async.flow=?
+- Flow graphs and execution models
+- Basic flow operations
+
+** 5. Flow Orchestration (notebooks/05_flow_orchestration.clj)
+- Complex data pipelines
+- Conditional flows
+- Error handling in flows
+- Flow composition patterns
+
+** 6. Flow Monitoring (notebooks/06_flow_monitoring.clj)
+- Using =core.async.flow-monitor=
+- Debugging flow execution
+- Performance monitoring
+- Visualization of flow states
+
+* Reference Links
+
+This project is based on the official Clojure documentation and guides:
+
+- [[https://clojure.github.io/core.async/rationale.html][Core.async Rationale]]
+- [[https://clojure.github.io/core.async/reference.html][Core.async Reference]]
+- [[https://clojure.github.io/core.async/walkthrough.html][Core.async Walkthrough]]
+- [[https://clojure.github.io/core.async/flow.html][Core.async Flow]]
+- [[https://clojure.github.io/core.async/flow-guide.html][Core.async Flow Guide]]
+
+* Contributing
+
+This project is designed for learning and experimentation. Feel free to:
+
+- Add new examples and notebooks
+- Improve existing documentation
+- Share interesting use cases
+- Report issues or suggest improvements
+
+* Examples Preview
+
+** Basic Channel Usage
+#+BEGIN_SRC clojure
+(require '[clojure.core.async :as async])
+
+(let [ch (async/chan)]
+  (async/go (async/>! ch "Hello, World!"))
+  (async/go (println (async/<! ch))))
+#+END_SRC
+
+** Simple Flow
+#+BEGIN_SRC clojure
+(require '[clojure.core.async.flow :as flow])
+
+(flow/flow {:source-chan (async/to-chan [1 2 3 4 5])
+            :flow-graph [{:fn inc :id :increment}
+                         {:fn #(* % 2) :id :double :deps [:increment]}]})
+#+END_SRC
+
+* License
+
+This project is provided for educational purposes. Please refer to individual library licenses for =core.async= and related dependencies.
