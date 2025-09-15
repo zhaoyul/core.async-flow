@@ -79,78 +79,192 @@
       m (mix out)]
   (admix m a)
   (admix m b)
-  (>!! a :a)
-  (>!! b :b)
+  (go (>!! a :a))
+  (go (>!! b :b))
   [(<!! out) (<!! out)])
 
 ;; ## 3. flow 简单示例
 
 (clerk/md "### 使用 flow 连接处理步骤")
-(defn inc-step
-  "将输入数字加一后发送到输出"
-  ([] {:ins {:in "输入"} :outs {:out "输出"}})
-  ([state port msg]
-   [state {:out (inc msg)}]))
 
-(defn sink-step
-  "将所有输入累积到 state 中"
-  ([] {:ins {:in "输入"}})
-  ([state port msg]
-   [(update state :seen conj msg) {}]))
+(defn stat-gen
+  "Generates a random value between min (inclusive) and max (exclusive)
+  and writes it to out chan, waiting wait ms between until stop-atom is flagged."
+  ([out min max wait stop-atom]
+   (loop []
+     (let [val (+ min (rand-int (- max min)))
+           put (a/>!! out val)]
+                                        ;(println "stat-gen" (System/identityHashCode stop-atom) val put (not @stop-atom))
+       (when (and put (not @stop-atom))
+         (^[long] Thread/sleep wait)
+         (recur))))))
 
-(def inc-proc (flow/process inc-step))
-(def sink-proc (flow/process sink-step))
+(defn source
+  "Source proc for random stats"
+  ;; describe
+  ([] {:params {:min "Min value to generate"
+                :max "Max value to generate"
+                :wait "Time in ms to wait between generating"}
+       :outs {:out "Output channel for stats"}})
 
-(def g
+  ;; init
+  ([args]
+   (assoc args
+          ::flow/in-ports {:stat (a/chan 100)}
+          :stop (atom false)))
+
+  ;; transition
+  ([{:keys [min max wait ::flow/in-ports] :as state} transition]
+                                        ;(println "transition" transition)
+   (case transition
+     ::flow/resume
+     (let [stop-atom (atom false)]
+       (future (stat-gen (:stat in-ports) min max wait stop-atom))
+       (assoc state :stop stop-atom))
+
+     (::flow/pause ::flow/stop)
+     (do
+       (reset! (:stop state) true)
+       state)))
+
+  ;; transform
+  ([state in msg]
+                                        ;(println "source transform" in msg)
+   [state (when (= in :stat) {:out [msg]})]))
+
+(defn aggregator
+  ;; describe
+  ([] {:params {:min "Min value, alert if lower"
+                :max "Max value, alert if higher"}
+       :ins {:stat "Channel to receive stat values"
+             :poke "Channel to poke when it is time to report a window of data to the log"}
+       :outs {:alert "Notify of value out of range {:val value, :error :high|:low"}
+       :workload :compute
+       })
+
+  ;; init
+  ([args] (assoc args :vals []))
+
+  ;; transition
+  ([state transition] state)
+
+  ;; transform
+  ([{:keys [min max vals] :as state} input-id msg]
+   (case input-id
+     :stat (let [state' (assoc state :vals (conj vals msg))
+                 msgs (cond
+                        (< msg min) {:alert [{:val msg, :error :low}]}
+                        (< max msg) {:alert [{:val msg, :error :high}]}
+                        :else nil)]
+             [state' msgs])
+     :poke [(assoc state :vals [])
+            {::flow/report (if (empty? vals)
+                             [{:count 0}]
+                             [{:avg (/ (double (reduce + vals)) (count vals))
+                               :count (count vals)}])}]
+     [state nil])))
+
+(comment
+  ;; test aggregator alert case - no channels involved
+  (let [state {:min 1 :max 5 :vals []}
+        [state' msgs'] (aggregator state :stat 100)]
+    (assert (= msgs' {:alert [{:val 100, :error :high}]})))
+  )
+
+
+(defn scheduler
+  ;; describe
+  ([] {:params {:wait "Time to wait between pokes"}
+       :outs {:out "Poke channel, will send true when the alarm goes off"}})
+
+  ;; init
+  ([args]
+   (assoc args
+          ::flow/in-ports {:alarm (a/chan 10)}
+          :stop (atom false)))
+
+  ;; transition
+  ([{:keys [wait ::flow/in-ports] :as state} transition]
+                                        ;(println "scheduler transition" transition state transition)
+   (case transition
+     ::flow/resume
+     (let [stop-atom (atom false)]
+       (future (loop []
+                 (let [put (a/>!! (:alarm in-ports) true)]
+                   (when (and put (not @stop-atom))
+                     (^[long] Thread/sleep wait)
+                     (recur)))))
+       (assoc state :stop stop-atom))
+
+     (::flow/pause ::flow/stop)
+     (do
+       (reset! (:stop state) true)
+       state)))
+
+  ;; transform
+  ([state in msg]
+   [state (when (= in :alarm) {:out [true]})]))
+
+(defn printer
+  ;; describe
+  ([] {:params {:prefix "Log message prefix"}
+       :ins {:in "Channel to receive messages"}})
+
+  ;; init
+  ([state] state)
+
+  ;; transition
+  ([state _transition] state)
+
+  ;; transform
+  ([{:keys [prefix] :as state} _in msg]
+   (println prefix msg)
+   [state nil]))
+
+(defn create-flow
+  []
   (flow/create-flow
-    {:procs {::inc {:proc inc-proc}
-             ::sink {:proc sink-proc}}
-     :conns [[::start :out] [::inc :in]
-             [::inc :out] [::sink :in]]}))
+   {:procs {:generator {:args {:min 0 :max 12 :wait 500} :proc (flow/process #'source)}
+            :aggregator {:args {:min 1 :max 10} :proc (flow/process #'aggregator)}
+            :scheduler {:args {:wait 3000} :proc (flow/process #'scheduler)}
+            :notifier {:args {:prefix "Alert: "} :proc (flow/process #'printer)
+                       :chan-opts {:in {:buf-or-n (a/sliding-buffer 3)}}}}
+    :conns [[[:generator :out] [:aggregator :stat]]
+            [[:scheduler :out] [:aggregator :poke]]
+            [[:aggregator :alert] [:notifier :in]]]}))
 
-(flow/start g)
-(flow/inject g [::start :out] [1 2 3])
-(Thread/sleep 100)
-(:seen (flow/ping-proc g ::sink))
-(flow/stop g)
+(comment
+  (def f (create-flow))
+  (def chs (flow/start f))
+  (flow/resume f)
+  (flow/pause f)
+  (flow/stop f)
 
-;; ## 4. 更复杂的 flow 拓扑
+  (def server (fmon/start-server {:flow f}))
+  (fmon/stop-server server)
 
-(clerk/md "### 同时广播到两个处理步骤")
+  @(flow/inject f [:aggregator :poke] [true])
+  @(flow/inject f [:aggregator :stat] ["abc1000"]) ;; trigger an alert
+  @(flow/inject f [:notifier :in] [:sandwich])
 
-(defn double-step
-  "输入数字乘二"
-  ([] {:ins {:in "输入"} :outs {:out "输出"}})
-  ([state port msg]
-   [state {:out (* 2 msg)}]))
+  (def report-chan (:report-chan chs))
+  (flow/ping f)
+  (a/poll! report-chan)
+  (def error-chan (:error-chan chs))
+  (a/poll! error-chan)
 
-(def double-proc (flow/process double-step))
+  (flow/stop f)
+  (a/close! stat-chan)
 
-(def g2
-  (flow/create-flow
-    {:procs {::inc   {:proc inc-proc}
-             ::double {:proc double-proc}
-             ::sink1 {:proc sink-proc}
-             ::sink2 {:proc sink-proc}}
-     :conns [[::start :out] [::inc :in]
-             [::start :out] [::double :in]
-             [::inc :out] [::sink1 :in]
-             [::double :out] [::sink2 :in]]}))
+  @(flow/inject f [:aggregator :poke] [true])
 
-(flow/start g2)
-(flow/inject g2 [::start :out] (range 5))
-(Thread/sleep 100)
-{:inc (:seen (flow/ping-proc g2 ::sink1))
- :double (:seen (flow/ping-proc g2 ::sink2))}
+  (require '[clojure.datafy :as datafy])
+  (datafy/datafy f)
 
-;; ## 5. flow-monitor 监控
+  (require '[clojure.core.async.flow-static :refer [graph]])
+  (graph f)
 
-(clerk/md "### 启动监控服务器观察 flow 状态")
-(def server (fmon/start-server {:flow g2 :port 9999}))
-;; 访问 http://localhost:9999/index.html 查看实时状态
-(fmon/stop-server server)
-(flow/stop g2)
-
+  )
 (comment
 
   ;; start Clerk's built-in webserver on the default port 7777, opening the browser when done
