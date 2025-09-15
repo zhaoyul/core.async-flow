@@ -1,0 +1,127 @@
+#+title: Clojure core.async/flow 全面体验笔记
+#+author: [Your Name]
+#+date: 2025-09-14
+#+description: 一个使用 Clerk Notebook 来深入学习和探索 Clojure core.async, 特别是新的 flow 和 flow-monitor 函数库的项目。
+#+keywords: clojure, core.async, flow, flow-monitor, clerk, async, concurrency
+#+startup: content
+
+* 项目目标 (Project Goal)
+
+本项目旨在通过 [[https://github.com/nextjournal/clerk][Clerk]] 这个强大的可视化笔记本工具，全面且深入地学习和展示 Clojure `core.async` 函数库的功能。我们将从 `core.async` 的基础概念（如 `go` 块和 `channel`）开始，逐步深入到最新的 `core.async/flow` 和 `core.async.flow-monitor`，理解它们如何简化异步流程的构建、组合与监控。
+
+灵感和参考资料来自官方文档：
+- [[https://clojure.github.io/core.async/rationale.html][core.async Rationale]]
+- [[https://clojure.github.io/core.async/reference.html][core.async Reference]]
+- [[https://clojure.github.io/core.async/walkthrough.html][core.async Walkthrough]]
+- [[https://clojure.org/news/2025/04/28/async_flow][Announcing core.async/flow]]
+- [[https://clojure.github.io/core.async/flow.html][core.async/flow API]]
+- [[https://clojure.github.io/core.async/flow-guide.html][core.async/flow Guide]]
+
+* 项目结构 (Project Structure)
+
+我们将在一个 Clerk notebook (`notebooks/exploration.clj`) 中完成所有实验。整个项目的结构如下：
+
+#+begin_src text
+.
+├── .gitignore
+├── deps.edn
+├── notebooks
+│   └── exploration.clj   ; 我们的 Clerk 笔记本
+└── README.org            ; 就是您正在阅读的这个文件
+#+end_src
+
+* 如何启动这个项目 (How to Run This Project)
+
+**1. 环境准备 (Prerequisites)**
+
+您需要先安装 [[https://clojure.org/guides/getting_started][Clojure CLI tools]]。
+
+**2. 项目设置 (Project Setup)**
+
+首先，创建您的项目目录并设置必要的文件。
+
+创建 `deps.edn` 文件，并填入以下内容。我们加入了 `core.async`，Clerk 以及新的 `flow-monitor`。
+
+#+begin_src clojure :tangle deps.edn
+{:paths ["src" "notebooks"]
+ :deps  {org.clojure/clojure {:mvn/version "1.12.0-alpha10"}
+         org.clojure/core.async {:mvn/version "2.0.833"}
+         org.clojure/core.async.flow-monitor {:mvn/version "1.0.123"} ;; 请根据最新版本调整
+         io.github.nextjournal/clerk {:mvn/version "0.15.967"}}
+ :aliases
+ {:notebook {:main-opts ["-m" "nextjournal.clerk.main" "watch" "notebooks"]}}}
+#+end_src
+
+创建 `notebooks/exploration.clj` 文件：
+
+#+begin_src clojure :tangle notebooks/exploration.clj
+;; # Clojure core.async/flow 全面体验笔记
+
+^{:nextjournal.clerk/visibility {:code :hide}}
+(ns exploration
+  (:require [clojure.core.async :as a :refer [>! <! >!! <!! go go-loop chan buffer dropping-buffer sliding-buffer promise-chan put! take! close! onto-chan!
+                                              pub sub unsub mix admix unmix pipe mult tap untap timeout alts! alts!!]]
+            [clojure.core.async.flow :as flow]
+            [clojure.core.async.flow-monitor :as fmon]
+            [nextjournal.clerk :as clerk]))
+
+;; --- Clerk 设置 ---
+^{:nextjournal.clerk/visibility {:code :hide :result :hide}}
+(clerk/set-viewers!
+  [{:pred #(instance? clojure.core.async.impl.channels.ManyToManyChannel %)
+    :render-fn '#(v/html [:div.text-gray-500 "[core.async channel]"])}])
+
+;; 现在，我们开始探索吧！
+;; (从这里开始撰写您的笔记和代码)
+
+#+end_src
+
+**3. 启动 Clerk (Start Clerk)**
+
+在您的终端中，执行以下指令：
+
+#+begin_src sh
+clojure -M:notebook
+#+end_src
+
+这会启动 Clerk 服务器并自动在您的浏览器中打开 `http://localhost:7777`。当您修改 `notebooks/exploration.clj` 并保存时，浏览器中的内容将会自动更新。
+
+* 笔记本内容规划 (Notebook Content Plan)
+
+我们将在 `exploration.clj` 中按照以下章节来进行探索和实验。
+
+**第一部分：`core.async` 基础回顾 (Core Concepts Revisited)**
+   - **Go Blocks & Channels**: 介绍 `go` 宏如何将代码转换为状态机，以及 `channel` 作为异步通信的核心。
+   - **`>!` 和 `<!`**: 深入理解 "parking" 和 "blocking" 的区别 (`>!!`/`<!!`)。
+   - **缓冲区 (Buffers)**: 实验固定大小、`dropping-buffer` 和 `sliding-buffer` 的行为差异。
+   - **`alts!`**: 展示如何在多个 channel 操作中进行选择，实现更复杂的协调。
+
+**第二部分：进阶 Channel 操作 (Advanced Channel Operations)**
+   - **`pipe`, `mult`, `tap`**: 如何建立数据流管道和广播模式。
+   - **`pub`/`sub`**: 探索基于主题的发布/订阅模型。
+   - **`mix`/`admix`**: 如何将多个 channel 的内容合并到一个 channel 中。
+   - **错误处理与超时**: 使用 `timeout` 和 `try-catch` 在 `go` 块中处理异常。
+
+**第三部分：`core.async/flow` 的威力 (The Power of `flow`)**
+   - **介绍 `flow`**: 为什么需要 `flow`？它如何解决 `core.async` 的一些样板代码问题？
+   - **`flow/comp` & `flow/map`**: 使用 `comp` 组合多个 transducer-like 的操作，建立清晰的数据处理流程。
+   - **`flow/source`, `flow/sink`**: 如何将现有的 channel 或集合转换为 `flow` 的来源和目标。
+   - **`flow/broadcast`**: `flow` 世界中的 `mult`/`tap`，如何优雅地实现一对多广播。
+   - **`flow/merge`, `flow/zip`**: 探索如何合并或配对多个 `flow`。
+   - **背压 (Backpressure)**: 讨论 `flow` 如何内置处理背压。
+
+**第四部分：使用 `flow-monitor` 进行监控与调试 (Monitoring with `flow-monitor`)**
+   - **启动 Monitor**: 如何设置并启动 `flow-monitor` UI。
+   - **`flow/watch`**: 使用 `watch` 来标记和监控一个 `flow` 的生命周期和数据流动。
+   - **解读监控数据**: 在 UI 中观察流量、延迟和缓冲区状态，理解 `flow` 的内部运作。
+   - **实际案例**: 建立一个包含多个步骤的 `flow`，并通过 `flow-monitor` 找出潜在的瓶颈。
+
+**第五部分：综合实战案例 (Putting It All Together)**
+   - **场景**: 设计一个模拟场景，例如：一个并行的 Web Crawler、一个实时数据处理仪表板，或是一个文件处理管道。
+   - **实现**: 综合运用 `go`, `channel`, `flow` 和 `flow-monitor` 来构建这个应用。
+   - **结论**: 回顾我们学到的知识，并总结 `core.async` 生态系的强大之处。
+
+---
+
+现在，您可以开始您的探索之旅了！依照上述步骤设置好项目，然后打开 `notebooks/exploration.clj`，开始撰写您的第一个 `core.async` 实验吧！
+

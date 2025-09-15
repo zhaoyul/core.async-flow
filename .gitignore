@@ -1,0 +1,7 @@
+target/
+classes/
+checkouts/
+.clj-kondo/
+.cpcache/
+.nrepl-port
+.clerk/
