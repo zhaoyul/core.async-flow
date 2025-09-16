@@ -267,8 +267,8 @@
 
 (defn scheduler
   ;; 描述
-  ([] {:params {:wait "Time to wait between pokes"}
-       :outs {:out "Poke channel, will send true when the alarm goes off"}})
+  ([] {:params {:wait "收集系统数据的时间间隔"}
+       :outs {:out "收集触发channel"}})
 
   ;; 初始化
   ([args]
