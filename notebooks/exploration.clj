@@ -8,34 +8,35 @@
             [nextjournal.clerk :as clerk]
             [nextjournal.clerk.viewer :as v]))
 
-;; --- Clerk 设置 ---
-;; ^{:nextjournal.clerk/visibility {:code :hide :result :hide}}
-;; (clerk/set-viewers!
-;;   [{:pred #(instance? clojure.core.async.impl.channels.ManyToManyChannel %)
-;;     :render-fn '#(v/html [:div.text-gray-500 "[core.async channel]"])}])
+
+^{:nextjournal.clerk/visibility {:code :hide :result :hide}}
+(clerk/add-viewers!
+ [{:pred #(instance? clojure.core.async.impl.channels.ManyToManyChannel %)
+   :render-fn '(fn [] [:h1.text-green-500 "🛣️"])}])
 
 ;; 现在，我们开始探索吧！
 ;; (从这里开始撰写您的笔记和代码)
 
 ;; ## 1. core.async 基础回顾
 
-(clerk/md "### Go 块与 Channel")
+;; ### Go 块与 Channel
 (def greeting-ch (chan))
 (go (>! greeting-ch "你好，core.async")) ; 将消息放入 channel
 (<!! greeting-ch)                       ; => "你好，core.async"
 
-(clerk/md "### 缓冲区示例")
+;; ### 缓冲区示例
+
 (def drop-ch (chan (dropping-buffer 1)))
 (>!! drop-ch :a)
-(>!! drop-ch :b) ; :a 被丢弃
-(<!! drop-ch)    ; => :b
+(>!! drop-ch :b)
+(<!! drop-ch) ;; 放不进去的:b会被drop掉
 
 (def slide-ch (chan (sliding-buffer 1)))
 (>!! slide-ch :a)
-(>!! slide-ch :b) ; :a 被覆盖
-(<!! slide-ch)    ; => :b
+(>!! slide-ch :b)
+(<!! slide-ch)
 
-(clerk/md "### alts! 从多个 channel 读取")
+;; ### alts! 从多个 channel 读取
 (let [c1 (chan)
       c2 (chan)]
   (go (<! (timeout 100)) (>! c1 :c1))
@@ -44,14 +45,14 @@
 
 ;; ## 2. 进阶 Channel 操作
 
-(clerk/md "### pipe")
+;; ### 管道(pipe)
 (let [in (chan)
       out (chan)]
   (pipe in out)
   (>!! in :hello)
   (<!! out))
 
-(clerk/md "### mult / tap")
+;; ### 多路分发(mult/tap)
 (let [source (chan)
       m (mult source)
       c1 (chan)
@@ -61,18 +62,18 @@
   (>!! source :hi)
   [(<!! c1) (<!! c2)])
 
-(clerk/md "### pub / sub")
+;; ### 订阅(pub/sub)
 (let [source (chan)
       p (pub source :topic)
       t1 (chan)
       t2 (chan)]
-  (sub p :foo t1)
-  (sub p :bar t2)
+  (sub p :foo t1) ;; 从p中订阅 :foo 主题
+  (sub p :bar t2) ;; 从p中订阅 :bar 主题
   (>!! source {:topic :foo :msg 1})
   (>!! source {:topic :bar :msg 2})
   [(<!! t1) (<!! t2)])
 
-(clerk/md "### mix / admix")
+;; ### mix / admix
 (let [a (chan)
       b (chan)
       out (chan)
