@@ -1,7 +1,7 @@
 ;; # Clojure core.async/flow 全面体验笔记
 ^{:nextjournal.clerk/visibility {:code :hide}}
 (ns exploration
-  (:require [clojure.core.async :as a :refer [>! <! >!! <!! go go-loop chan buffer dropping-buffer sliding-buffer promise-chan put! take! close! onto-chan!
+  (:require [clojure.core.async :as a :refer [>! <! >!! <!! go go-loop chan buffer dropping-buffer sliding-buffer promise-chan put! take! close! onto-chan! alt!
                                               pub sub unsub mix admix unmix pipe mult tap untap timeout alts! alts!!]]
             [clojure.core.async.flow :as flow]
             [clojure.core.async.flow-monitor :as fmon]
@@ -13,9 +13,6 @@
 (clerk/add-viewers!
  [{:pred #(instance? clojure.core.async.impl.channels.ManyToManyChannel %)
    :render-fn '(fn [] [:h1.text-green-500 "🛣️"])}])
-
-;; 现在，我们开始探索吧！
-;; (从这里开始撰写您的笔记和代码)
 
 ;; ## 1. core.async 基础回顾
 
@@ -83,6 +80,47 @@
   (go (>!! a :a))
   (go (>!! b :b))
   [(<!! out) (<!! out)])
+
+;; ### alt!
+(let [chan-a (chan)
+      chan-b (chan)
+      chan-c (chan)
+      chan-d (chan)
+      chan-e (chan)
+      chan-f (chan)
+      chan-g (chan)
+      chan-h (chan)
+      chan-i (chan)]
+  (go-loop [i 10]
+    (when (> i 0)
+      (println
+       (alt!
+         chan-a :receive-from-a               ;; 单个接收chan, 返回表达式
+         chan-b ([v] (println "b:" v))        ;; 单个接收chan, 一个参数的callback func
+         [chan-c chan-d] :receive-from-c-or-d ;; 多个接收chan, 返回表达式
+         [chan-e chan-f] ([v c]               ;; 多个接收chan, 两个参数的call-back
+                          (println "receive:" v "from" c))
+         [[chan-g "v"]]  :send-to-g           ;; 单个发送chan,
+         [[chan-h "h"]]  ([v]                 ;; 单个发送chan, 一个参数的call-back
+                          (println "from h:" v))
+         [[chan-i "i"]]  ([v c]               ;; 单个发送chan, 两个参数的call-back
+                          (println "send:" v "from" c))
+         ;;(timeout 100) :timeout
+         :default 42
+         )))
+    (recur (dec i)))
+
+  (put! chan-a "msg...") ;; return=> :receive-from-a
+  (put! chan-b "msg...")   ;; print => b: msg...
+  (put! chan-c "msg...")   ;; return=> :receive-from-c-or-d
+  (put! chan-d "msg...")   ;; return=> :receive-from-c-or-d
+  (put! chan-e "msg...")  ;; print=> receive: msg... from #object...
+  (put! chan-f "msg...")  ;; print=> receive: msg... from #object...
+  [(<!! chan-g)           ;; print=> :send-to-g
+   (<!! chan-h)           ;; print=> from h: true
+   (<!! chan-i)]           ;; print=> from h: true
+  )
+
 
 ;; ## 3. flow 简单示例
 
