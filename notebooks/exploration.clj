@@ -18,8 +18,8 @@
 
 ;; ### Go 块与 Channel
 (def greeting-ch (chan))
-(go (>! greeting-ch "你好，core.async")) ; 将消息放入 channel
-(<!! greeting-ch)                       ; => "你好，core.async"
+(go (>! greeting-ch "你好, core.async")) ; 将消息放入 channel
+(<!! greeting-ch)                       ; => "你好, core.async"
 
 ;; ### 缓冲区示例
 
@@ -178,87 +178,87 @@
 
 ;; ## 3. flow 简单示例
 
-(clerk/md "### 使用 flow 连接处理步骤")
+;; ### 使用 flow 连接处理步骤
 
 (defn stat-gen
-"Generates a random value between min (inclusive) and max (exclusive)
-  and writes it to out chan, waiting wait ms between until stop-atom is flagged."
-([out min max wait stop-atom]
- (loop []
-   (let [val (+ min (rand-int (- max min)))
-         put (a/>!! out val)]
-                                        ;(println "stat-gen" (System/identityHashCode stop-atom) val put (not @stop-atom))
-     (when (and put (not @stop-atom))
-       (^[long] Thread/sleep wait)
-       (recur))))))
+  "生成一个介于 min (包含) 和 max (不包含) 之间的随机值, 并将其写入 out 通道.
+   在 stop-atom 被标记为 true 之前, 每次写入之间会等待 wait 毫秒. "
+  ([out min max wait stop-atom]
+   (loop []
+     (let [val (+ min (rand-int (- max min)))
+           put (a/>!! out val)]
+       (println "stat-gen" (System/identityHashCode stop-atom) val put (not @stop-atom))
+       (when (and put (not @stop-atom))
+         (^[long] Thread/sleep wait)
+         (recur))))))
 
 (defn source
-"Source proc for random stats"
-;; describe
-([] {:params {:min "Min value to generate"
-              :max "Max value to generate"
-              :wait "Time in ms to wait between generating"}
-     :outs {:out "Output channel for stats"}})
+  "随机数生成"
+  ;; 描述
+  ([] {:params {:min "生成下限"
+                :max "生成上限"
+                :wait "毫秒间隔"}
+       :outs {:out "随机数的输出channel"}})
 
-;; init
-([args]
- (assoc args
-        ::flow/in-ports {:stat (a/chan 100)}
-        :stop (atom false)))
+  ;; 初始化状态, 状态map是状态切换的参数
+  ([args]
+   (assoc args
+          ::flow/in-ports {:stat (a/chan 100)}
+          :stop (atom false)))
 
-;; transition
-([{:keys [min max wait ::flow/in-ports] :as state} transition]
-                                        ;(println "transition" transition)
- (case transition
-   ::flow/resume
-   (let [stop-atom (atom false)]
-     (future (stat-gen (:stat in-ports) min max wait stop-atom))
-     (assoc state :stop stop-atom))
+  ;; 状态切换
+  ([{:keys [min max wait ::flow/in-ports] :as state} transition]
+   (println "transition" transition)
+   (case transition
+     ::flow/resume
+     (let [stop-atom (atom false)]
+       (future (stat-gen (:stat in-ports) min max wait stop-atom))
+       (assoc state :stop stop-atom))
 
-   (::flow/pause ::flow/stop)
-   (do
-     (reset! (:stop state) true)
-     state)))
+     (::flow/pause ::flow/stop)
+     (do
+       (reset! (:stop state) true)
+       state)))
 
-;; transform
-([state in msg]
-                                        ;(println "source transform" in msg)
- [state (when (= in :stat) {:out [msg]})]))
+  ;; 数据处理
+  ([state in msg]
+   (println "source transform" in msg)
+   [state (when (= in :stat) {:out [msg]})]))
 
 (defn aggregator
-;; describe
-([] {:params {:min "Min value, alert if lower"
-              :max "Max value, alert if higher"}
-     :ins {:stat "Channel to receive stat values"
-           :poke "Channel to poke when it is time to report a window of data to the log"}
-     :outs {:alert "Notify of value out of range {:val value, :error :high|:low"}
-     :workload :compute
-     })
+  ;; 描述
+  ([] {:params {:min "告警阈值下限, 低于则告警"
+                :max "告警阈值上限限, 高于则告警"}
+       :ins {:stat "收取数据的channel"
+             :poke "触发系统日志的channel"}
+       :outs {:alert "告警channel {:val value, :error :high|:low"}
+       :workload :compute
+       })
 
-;; init
-([args] (assoc args :vals []))
+  ;; 初始化
+  ([args] (assoc args :vals []))
 
-;; transition
-([state transition] state)
+  ;; 状态转化
+  ([state transition] state)
 
-;; transform
-([{:keys [min max vals] :as state} input-id msg]
- (case input-id
-   :stat (let [state' (assoc state :vals (conj vals msg))
-               msgs (cond
-                      (< msg min) {:alert [{:val msg, :error :low}]}
-                      (< max msg) {:alert [{:val msg, :error :high}]}
-                      :else nil)]
-           [state' msgs])
-   :poke [(assoc state :vals [])
-          {::flow/report (if (empty? vals)
-                           [{:count 0}]
-                           [{:avg (/ (double (reduce + vals)) (count vals))
-                             :count (count vals)}])}]
-   [state nil])))
+  ;; 数据处理
+  ([{:keys [min max vals] :as state} input-id msg]
+   (case input-id
+     :stat (let [state' (assoc state :vals (conj vals msg))
+                 msgs (cond
+                        (< msg min) {:alert [{:val msg, :error :low}]}
+                        (< max msg) {:alert [{:val msg, :error :high}]}
+                        :else nil)]
+             [state' msgs])
+     :poke [(assoc state :vals [])
+            {::flow/report (if (empty? vals)
+                             [{:count 0}]
+                             [{:avg (/ (double (reduce + vals)) (count vals))
+                               :count (count vals)}])}]
+     [state nil])))
 
 (comment
-  ;; test aggregator alert case - no channels involved
+  ;; 测试 aggregator 告警
   (let [state {:min 1 :max 5 :vals []}
         [state' msgs'] (aggregator state :stat 100)]
     (assert (= msgs' {:alert [{:val 100, :error :high}]})))
@@ -266,19 +266,19 @@
 
 
 (defn scheduler
-  ;; describe
+  ;; 描述
   ([] {:params {:wait "Time to wait between pokes"}
        :outs {:out "Poke channel, will send true when the alarm goes off"}})
 
-  ;; init
+  ;; 初始化
   ([args]
    (assoc args
           ::flow/in-ports {:alarm (a/chan 10)}
           :stop (atom false)))
 
-  ;; transition
+  ;; 状态转化
   ([{:keys [wait ::flow/in-ports] :as state} transition]
-                                        ;(println "scheduler transition" transition state transition)
+   (println "scheduler transition" transition state transition)
    (case transition
      ::flow/resume
      (let [stop-atom (atom false)]
@@ -294,22 +294,22 @@
        (reset! (:stop state) true)
        state)))
 
-  ;; transform
+  ;; 数据处理
   ([state in msg]
    [state (when (= in :alarm) {:out [true]})]))
 
 (defn printer
-  ;; describe
+  ;; 描述
   ([] {:params {:prefix "Log message prefix"}
        :ins {:in "Channel to receive messages"}})
 
-  ;; init
+  ;; 初始化
   ([state] state)
 
-  ;; transition
+  ;; 状态
   ([state _transition] state)
 
-  ;; transform
+  ;; 数据处理
   ([{:keys [prefix] :as state} _in msg]
    (println prefix msg)
    [state nil]))
