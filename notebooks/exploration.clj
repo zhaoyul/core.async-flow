@@ -121,87 +121,141 @@
    (<!! chan-i)]           ;; print=> from h: true
   )
 
+;; ### 关闭channel
+
+;; 1. close! 是个副作用函数, 始终返回nil
+;; 1. 从关闭的channel中, 取出的始终是nil
+;; 2. 放入关闭的channel, 返回值始终是false
+(let [c (chan)]
+  [(close! c)
+   (<!! c)
+   (put! c 100)])
+
+
+;; **注意**: 以前放入的值, 还可以拿到, 拿到之后永远是nil
+(let [c (chan)]
+  (put! c 100)
+  [(close! c)
+   (<!! c)   ;; 拿到100
+   (<!! c)   ;; 拿到nil
+   (put! c 100)])
+
+;; 对pipe的影响
+(let [in (chan)
+      out (chan)]
+  (pipe in out)
+  (>!! in :hello)
+  (close! in)
+  [(<!! out)
+   (<!! in)    ;; 上游in 被我们关闭
+   (<!! out)]  ;; 下游out 会连带关闭
+  )
+
+;; 对多路分发的影响
+(let [source (chan)
+      m (mult source)
+      c1 (chan)
+      c2 (chan)]
+  (tap m c1)
+  (tap m c2)
+  (>!! source :hi)
+  [(<!! c1) (<!! c2)
+   (close! source)  ;; 关闭source
+   (<!! c1) (<!! c2)]) ;; 所有的tap都会关闭
+
+;; 对pub/sub的影响
+(let [source (chan)
+      p (pub source :topic)
+      t1 (chan)
+      t2 (chan)]
+  (sub p :foo t1) ;; 从p中订阅 :foo 主题
+  (sub p :bar t2) ;; 从p中订阅 :bar 主题
+  (>!! source {:topic :foo :msg 1})
+  (>!! source {:topic :bar :msg 2})
+  [(<!! t1) (<!! t2)
+   (close! source)       ;; 关闭source
+   (<!! t1) (<!! t2)])   ;; 所有的订阅都会关闭
 
 ;; ## 3. flow 简单示例
 
 (clerk/md "### 使用 flow 连接处理步骤")
 
 (defn stat-gen
-  "Generates a random value between min (inclusive) and max (exclusive)
+"Generates a random value between min (inclusive) and max (exclusive)
   and writes it to out chan, waiting wait ms between until stop-atom is flagged."
-  ([out min max wait stop-atom]
-   (loop []
-     (let [val (+ min (rand-int (- max min)))
-           put (a/>!! out val)]
+([out min max wait stop-atom]
+ (loop []
+   (let [val (+ min (rand-int (- max min)))
+         put (a/>!! out val)]
                                         ;(println "stat-gen" (System/identityHashCode stop-atom) val put (not @stop-atom))
-       (when (and put (not @stop-atom))
-         (^[long] Thread/sleep wait)
-         (recur))))))
+     (when (and put (not @stop-atom))
+       (^[long] Thread/sleep wait)
+       (recur))))))
 
 (defn source
-  "Source proc for random stats"
-  ;; describe
-  ([] {:params {:min "Min value to generate"
-                :max "Max value to generate"
-                :wait "Time in ms to wait between generating"}
-       :outs {:out "Output channel for stats"}})
+"Source proc for random stats"
+;; describe
+([] {:params {:min "Min value to generate"
+              :max "Max value to generate"
+              :wait "Time in ms to wait between generating"}
+     :outs {:out "Output channel for stats"}})
 
-  ;; init
-  ([args]
-   (assoc args
-          ::flow/in-ports {:stat (a/chan 100)}
-          :stop (atom false)))
+;; init
+([args]
+ (assoc args
+        ::flow/in-ports {:stat (a/chan 100)}
+        :stop (atom false)))
 
-  ;; transition
-  ([{:keys [min max wait ::flow/in-ports] :as state} transition]
+;; transition
+([{:keys [min max wait ::flow/in-ports] :as state} transition]
                                         ;(println "transition" transition)
-   (case transition
-     ::flow/resume
-     (let [stop-atom (atom false)]
-       (future (stat-gen (:stat in-ports) min max wait stop-atom))
-       (assoc state :stop stop-atom))
+ (case transition
+   ::flow/resume
+   (let [stop-atom (atom false)]
+     (future (stat-gen (:stat in-ports) min max wait stop-atom))
+     (assoc state :stop stop-atom))
 
-     (::flow/pause ::flow/stop)
-     (do
-       (reset! (:stop state) true)
-       state)))
+   (::flow/pause ::flow/stop)
+   (do
+     (reset! (:stop state) true)
+     state)))
 
-  ;; transform
-  ([state in msg]
+;; transform
+([state in msg]
                                         ;(println "source transform" in msg)
-   [state (when (= in :stat) {:out [msg]})]))
+ [state (when (= in :stat) {:out [msg]})]))
 
 (defn aggregator
-  ;; describe
-  ([] {:params {:min "Min value, alert if lower"
-                :max "Max value, alert if higher"}
-       :ins {:stat "Channel to receive stat values"
-             :poke "Channel to poke when it is time to report a window of data to the log"}
-       :outs {:alert "Notify of value out of range {:val value, :error :high|:low"}
-       :workload :compute
-       })
+;; describe
+([] {:params {:min "Min value, alert if lower"
+              :max "Max value, alert if higher"}
+     :ins {:stat "Channel to receive stat values"
+           :poke "Channel to poke when it is time to report a window of data to the log"}
+     :outs {:alert "Notify of value out of range {:val value, :error :high|:low"}
+     :workload :compute
+     })
 
-  ;; init
-  ([args] (assoc args :vals []))
+;; init
+([args] (assoc args :vals []))
 
-  ;; transition
-  ([state transition] state)
+;; transition
+([state transition] state)
 
-  ;; transform
-  ([{:keys [min max vals] :as state} input-id msg]
-   (case input-id
-     :stat (let [state' (assoc state :vals (conj vals msg))
-                 msgs (cond
-                        (< msg min) {:alert [{:val msg, :error :low}]}
-                        (< max msg) {:alert [{:val msg, :error :high}]}
-                        :else nil)]
-             [state' msgs])
-     :poke [(assoc state :vals [])
-            {::flow/report (if (empty? vals)
-                             [{:count 0}]
-                             [{:avg (/ (double (reduce + vals)) (count vals))
-                               :count (count vals)}])}]
-     [state nil])))
+;; transform
+([{:keys [min max vals] :as state} input-id msg]
+ (case input-id
+   :stat (let [state' (assoc state :vals (conj vals msg))
+               msgs (cond
+                      (< msg min) {:alert [{:val msg, :error :low}]}
+                      (< max msg) {:alert [{:val msg, :error :high}]}
+                      :else nil)]
+           [state' msgs])
+   :poke [(assoc state :vals [])
+          {::flow/report (if (empty? vals)
+                           [{:count 0}]
+                           [{:avg (/ (double (reduce + vals)) (count vals))
+                             :count (count vals)}])}]
+   [state nil])))
 
 (comment
   ;; test aggregator alert case - no channels involved
