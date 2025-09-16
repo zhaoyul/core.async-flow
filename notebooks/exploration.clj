@@ -6,13 +6,72 @@
             [clojure.core.async.flow :as flow]
             [clojure.core.async.flow-monitor :as fmon]
             [nextjournal.clerk :as clerk]
-            [nextjournal.clerk.viewer :as v]))
+            [nextjournal.clerk.viewer :as v])
+  (:import [java.lang.management ManagementFactory]
+           [java.lang Runtime]))
 
 
 ^{:nextjournal.clerk/visibility {:code :hide :result :hide}}
 (clerk/add-viewers!
  [{:pred #(instance? clojure.core.async.impl.channels.ManyToManyChannel %)
    :render-fn '(fn [] [:h1.text-green-500 "🛣️"])}])
+
+
+;; ## 0. 为什么有core.async
+
+^{:nextjournal.clerk/visibility {:code :show}}
+(defn get-memory-usage
+  "查看当前jvm的堆内存, 返回一个map:
+  {:total 536, :free 373, :used 163}"
+  []
+  (let [runtime (Runtime/getRuntime)]
+    {:total (int (/ (.totalMemory runtime) 1e6))
+     :free (int (/ (.freeMemory runtime) 1e6))
+     :used (int (/ (- (.totalMemory runtime) (.freeMemory runtime)) 1e6))}))
+
+^{:nextjournal.clerk/visibility {:code :show}}
+(defn get-thread-count "获取总的线程数量" []
+  (let [thread-mx-bean (ManagementFactory/getThreadMXBean)]
+    (.getThreadCount thread-mx-bean)))
+
+
+^{:nextjournal.clerk/visibility {:code :show :result :show}}
+(clerk/table (let [m (get-memory-usage)]
+               [(keys m)
+                (vals m)]))
+
+
+(get-thread-count)
+
+^{:nextjournal.clerk/visibility {:code :show :result :show}}
+(clerk/table (let [m (get-memory-usage)]
+               [(keys m)
+                (vals m)]))
+
+
+;; **创建百万个channel**
+^{:nextjournal.clerk/visibility {:code :show :result :show}}
+(dotimes [_ 1e6]
+  (go
+    (<! (chan))))
+
+^{:nextjournal.clerk/visibility {:code :show :result :show}}
+(dotimes [_ 1e3]
+  (future
+    (Thread/sleep 100000)))
+
+
+
+^{:nextjournal.clerk/visibility {:code :show :result :show}}
+(clerk/table (let [m (get-memory-usage)]
+               [(keys m)
+                (vals m)]))
+
+
+(get-thread-count)
+
+
+
 
 ;; ## 1. core.async 基础回顾
 
