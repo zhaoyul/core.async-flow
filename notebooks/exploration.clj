@@ -70,15 +70,44 @@
 
 (get-thread-count)
 
-
-
-
 ;; ## 1. core.async 基础回顾
 
 ;; ### Go 块与 Channel
 (def greeting-ch (chan))
 (go (>! greeting-ch "你好, core.async")) ; 将消息放入 channel
 (<!! greeting-ch)                       ; => "你好, core.async"
+
+;; ### <!, >! 与 go 协作
+^{:nextjournal.clerk/visibility {:code :show :result :show}}
+(let [requests (chan)
+      responses (chan)]
+  (go ;; <! 会在 go 中停车等待数据, 不会占用真实线程
+    (let [req (<! requests)]
+      ;; 读取后用 >! 异步地将处理结果放入另一个 channel
+      (>! responses (str "响应:" req))))
+  ;; >!! 会阻塞当前线程, 直到有接收者准备好
+  (>!! requests "ping")
+  ;; <!! 同样会阻塞直到读到值
+  (<!! responses))
+
+;; ### <!! 阻塞等待 go 中产出的值
+^{:nextjournal.clerk/visibility {:code :show :result :show}}
+(let [c (chan)]
+  (go
+    (>! c :准备)
+    (<! (timeout 20))
+    (>! c :完成))
+  [(<!! c) (<!! c)])
+
+;; ### >!! 阻塞式写入直到值被消费
+^{:nextjournal.clerk/visibility {:code :show :result :show}}
+(let [c (chan)
+      ack (promise)]
+  (go
+    (let [v (<! c)]
+      (deliver ack v)))
+  {:put-return (>!! c :sync-value)
+   :received @ack})
 
 ;; ### 缓冲区示例
 
@@ -98,6 +127,26 @@
   (go (<! (timeout 100)) (>! c1 :c1))
   (go (<! (timeout 50)) (>! c2 :c2))
   (<!! (go (alts! [c1 c2]))))
+
+;; ### 使用 Transducer 组合 channel 的数据处理
+^{:nextjournal.clerk/visibility {:code :show :result :show}}
+(let [xf (comp (map inc)
+               (filter even?)
+               (map #(* % %)))
+      transducer-ch (chan 10 xf)]
+  ;; onto-chan! 会自动关闭 channel, <!! 阻塞直到传输完毕
+  (<!! (a/onto-chan! transducer-ch (range 6)))
+  (<!! (a/into [] transducer-ch)))
+
+;; ### pipeline 与 transducer 的配合
+^{:nextjournal.clerk/visibility {:code :show :result :show}}
+(let [xf (comp (map #(* % %))
+               (filter odd?))
+      in (chan 5)
+      out (chan 5)]
+  (a/pipeline 4 out xf in)
+  (<!! (a/onto-chan! in (range 8)))
+  (<!! (a/into [] out)))
 
 ;; ## 2. 进阶 Channel 操作
 
@@ -234,6 +283,48 @@
   [(<!! t1) (<!! t2)
    (close! source)       ;; 关闭source
    (<!! t1) (<!! t2)])   ;; 所有的订阅都会关闭
+
+;; ### go 线程池：停车与阻塞的差别
+^{:nextjournal.clerk/visibility {:code :show :result :show}}
+(let [result (chan)
+      go-count 64]
+  (dotimes [_ go-count]
+    (go
+      ;; 使用 <! 会在等待 timeout 时停车，让出线程
+      (<! (timeout 10))))
+  (go (>! result :done))
+  (let [[value port] (alts!! [result (timeout 50)])]
+    {:value value
+     :timed-out? (not= port result)
+     :parked-go-count go-count}))
+
+;; ### 错误示例：<!! 阻塞导致线程池耗尽
+^{:nextjournal.clerk/visibility {:code :show :result :show}}
+(let [result (chan)
+      go-count 64]
+  (dotimes [_ go-count]
+    (go
+      ;; 错误：<!! 在 go 中会阻塞真实线程
+      (<!! (timeout 200))))
+  (go (>! result :done))
+  (let [[value port] (alts!! [result (timeout 50)])]
+    {:value value
+     :timed-out? (not= port result)
+     :blocked-go-count go-count}))
+
+;; ### 修正方式：将阻塞操作放入 thread 或 pipeline-blocking
+^{:nextjournal.clerk/visibility {:code :show :result :show}}
+(let [result (chan)
+      worker-count 64]
+  (dotimes [_ worker-count]
+    (a/thread
+      ;; thread 使用真实线程, 允许阻塞调用
+      (<!! (timeout 200))))
+  (go (>! result :done))
+  (let [[value port] (alts!! [result (timeout 50)])]
+    {:value value
+     :timed-out? (not= port result)
+     :worker-count worker-count}))
 
 ;; ## 3. flow 简单示例
 
