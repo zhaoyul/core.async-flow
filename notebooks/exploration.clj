@@ -1,5 +1,6 @@
 ;; # Clojure core.async/flow 全面体验笔记
-^{:nextjournal.clerk/visibility {:code :hide}}
+^{:nextjournal.clerk/visibility {:code :hide}
+  :nextjournal.clerk/toc true}
 (ns exploration
   (:require [clojure.core.async :as a :refer [>! <! >!! <!! go go-loop chan buffer dropping-buffer sliding-buffer promise-chan put! take! close! onto-chan! alt!
                                               pub sub unsub mix admix unmix pipe mult tap untap timeout alts! alts!!]]
@@ -147,6 +148,41 @@
   (a/pipeline 4 out xf in)
   (<!! (a/onto-chan! in (range 8)))
   (<!! (a/into [] out)))
+
+;; ### 异常处理
+^{:nextjournal.clerk/visibility {:code :show :result :show}}
+(let [in (chan)
+      out (chan)
+      errors (chan)]
+  (go-loop []
+    (if-some [value (<! in)]
+      (do
+        (try
+          (put! out (/ 10 value))
+          (catch Throwable t
+            (put! errors {:input value
+                          :message (.getMessage t)})))
+        (recur))
+      (do
+        (close! out)
+        (close! errors))))
+
+
+  (>!! in 2)
+  (>!! in 0)
+  (>!! in 5)
+  (close! in)
+
+
+
+  {:ok-values (loop [acc []]
+                (if-some [v (<!! out)]
+                  (recur (conj acc v))
+                  acc))
+   :errors (loop [acc []]
+             (if-some [err (<!! errors)]
+               (recur (conj acc err))
+               acc))})
 
 ;; ## 2. 进阶 Channel 操作
 
@@ -311,6 +347,31 @@
     {:value value
      :timed-out? (not= port result)
      :blocked-go-count go-count}))
+
+;; ### go 线程池并发度上限演示
+^{:nextjournal.clerk/visibility {:code :show :result :show}}
+(let [task-count 20
+      ;; done 通道设置成足够的缓冲，避免 >! 再次停车影响测量
+      done (chan task-count)
+      start (System/nanoTime)]
+  (dotimes [i task-count]
+    (go
+      ;; Thread/sleep 会占用真实线程，最多只有固定数量的 go 线程可用
+      (Thread/sleep 200)
+      (>! done {:task i
+                :finished-ms (/ (- (System/nanoTime) start) 1e6)})))
+  (let [results (repeatedly task-count #(<!! done))
+        batches (->> results
+                     (group-by #(int (Math/floor (/ (:finished-ms %) 200))))
+                     (map (fn [[slot xs]]
+                            {:slot slot
+                             :completed (count xs)
+                             :finished-range [(apply min (map :finished-ms xs))
+                                              (apply max (map :finished-ms xs))]}))
+                     (sort-by :slot))]
+    {:task-count task-count
+     :sleep-ms 200
+     :batch-summary batches}))
 
 ;; ### 修正方式：将阻塞操作放入 thread 或 pipeline-blocking
 ^{:nextjournal.clerk/visibility {:code :show :result :show}}
